@@ -1,0 +1,66 @@
+import pandas as pd
+import requests
+
+# Function to calculate distances using Google Maps Distance Matrix API
+def calculate_distances(api_key, plant_lat, plant_long, df, plant_id):
+    # Create an empty list to store the distances and plant IDs
+    distances = []
+    plant_ids = []
+
+    # Iterate through the DataFrame rows (each row contains MCC point info)
+    for index, row in df.iterrows():
+        # Get the MCC's  LATITUDE	LONGITUDE
+        mcc_lat = row['LATITUDE']
+        mcc_long = row['LONGITUDE']
+
+        # Construct the Distance Matrix API URL
+        origins = f"{plant_lat},{plant_long}"
+        destination = f"{mcc_lat},{mcc_long}"
+        url = f"https://maps.googleapis.com/maps/api/distancematrix/json?origins={origins}&destinations={destination}&key={api_key}"
+
+        # Make the API request
+        response = requests.get(url)
+        
+        if response.status_code == 200:
+            data = response.json()
+            # Extract the distance in kilometers
+            distance = data['rows'][0]['elements'][0]['distance']['text']
+            distances.append(distance)
+            plant_ids.append(plant_id)  # Store the PlantID for each MCC
+        else:
+            print(f"Failed to get data for MCC Code {row['MCC Code']}")
+            distances.append('Error')
+            plant_ids.append(plant_id)  # Still append the PlantID even if the distance fails
+
+    # Return the list of distances and plant IDs
+    return distances, plant_ids
+
+# Example usage
+def main():
+    # Load the Excel sheet containing MCC data
+    file_path = r'C:\\Users\\satishkumar.s\Desktop\\venkat\\correct map points\\1730.xlsx'  # Path to your Excel file
+    df = pd.read_excel(file_path)
+
+    # Define the plant's latitude, longitude, and PlantID
+    plant_id = '1730'  # Example PlantID
+    plant_lat = '16.96577'  # Plant Latitude
+    plant_long = '78.47354'  # Plant Longitude
+
+    # Your Google Maps API key
+    api_key = ''
+
+    # Calculate the distances from the plant to each MCC and get PlantID
+    distances, plant_ids = calculate_distances(api_key, plant_lat, plant_long, df, plant_id)
+
+    # Add the distances and PlantID as new columns to the DataFrame
+    df['Distance from Plant'] = distances
+    df['PlantID'] = plant_ids
+
+    # Save the DataFrame back to a new Excel file
+    output_file = r'C:\\Users\\satishkumar.s\\Desktop\\venkat\\distance from plant to every point\\1730 mcc_distances_output_with_plantid.xlsx'
+    df.to_excel(output_file, index=False)
+
+    print(f"Distances and PlantID saved to {output_file}")
+
+if __name__ == "__main__":
+    main()
