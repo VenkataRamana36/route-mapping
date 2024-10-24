@@ -1,0 +1,142 @@
+import pandas as pd
+import googlemaps
+import folium
+from geopy.distance import geodesic
+from collections import defaultdict
+
+# Google Maps API key
+gmaps = googlemaps.Client(key='')  # Replace with your actual API key
+
+# Load the Excel data
+file_path = r'C:\Users\satishkumar.s\Desktop\venkat\lat and long.xlsx'
+df = pd.read_excel(file_path, sheet_name='Sheet1')
+
+# Drop rows with NaN values in critical columns
+df = df.dropna(subset=['LATITUDE', 'LONGITUDE', 'Plant LAT', 'Plant LONG', 'Plant Code', 'Route Name'])
+
+# Get unique plant codes and routes
+plant_codes = df['Plant Code'].unique()
+routes = df['Route Name'].unique()
+
+# Initialize the map centered around the general area of all routes
+initial_lat, initial_long = df['Plant LAT'].mean(), df['Plant LONG'].mean()
+m = folium.Map(location=[initial_lat, initial_long], zoom_start=10)
+
+# Define a list of colors for the routes
+colors = [
+    "red", "blue", "green", "purple", "orange", "pink",
+    "black", "violet", "brown", "yellow", "gray"
+]
+
+# Ensure distinct colors for each route
+route_colors = {route: colors[i % len(colors)] for i, route in enumerate(routes)}
+
+# Create a dict to hold feature groups for each plant code
+plant_code_layers = {plant_code: folium.FeatureGroup(name=f"Plant Code: {plant_code}", show=False) for plant_code in plant_codes}
+
+# Process each plant code
+for plant_code in plant_codes:
+    # Filter data for the specific plant code
+    plant_code_data = df[df['Plant Code'] == plant_code]
+    
+    # Process each route under this plant code
+    for route_name in plant_code_data['Route Name'].unique():
+        route_data = plant_code_data[plant_code_data['Route Name'] == route_name]
+        
+        # Extract plant latitude and longitude
+        plant_lat_long_list = route_data[['Plant LAT', 'Plant LONG']].dropna().values.tolist()
+        if not plant_lat_long_list:
+            continue  # Skip if no plant coordinates are available
+        
+        plant_lat, plant_long = plant_lat_long_list[0]
+        
+        # Add a marker for the plant location
+        folium.Marker(
+            location=[plant_lat, plant_long],
+            popup=f"Plant Location (Home) - {route_name}",
+            icon=folium.Icon(icon='home', prefix='fa', color='green', icon_size=(35, 35)),
+        ).add_to(plant_code_layers[plant_code])
+        
+        # Calculate distance from each point to the plant
+        route_data['Distance'] = route_data.apply(
+            lambda row: geodesic((row['LATITUDE'], row['LONGITUDE']), (plant_lat, plant_long)).km,
+            axis=1
+        )
+        
+        # Sort by distance in descending order (farthest first)
+        route_data = route_data.sort_values('Distance', ascending=False)
+        
+        # Add the route waypoints and route name
+        waypoints_str = []
+        for i, row in enumerate(route_data.itertuples(), start=1):
+            lat, lng = row.LATITUDE, row.LONGITUDE
+            mcc_code = row._2  # Replace '_2' with actual column name for MCC Code
+            mcc_name = row._3  # Replace '_3' with actual column name for MCC Name
+            
+            # Add marker with the route number and popup
+            folium.Marker(
+                location=[lat, lng],
+                icon=folium.DivIcon(
+                    html=f"""
+                        <div style="font-size: 14pt; font-weight: bold; color: white; background-color: {route_colors[route_name]};
+                                    border-radius: 15px; width: 30px; height: 30px;
+                                    text-align: center; line-height: 30px;">
+                            {i}
+                        </div>
+                    """
+                ),
+                popup=f"Route: {route_name}<br>MCC Code: {mcc_code}<br>MCC Name: {mcc_name}<br>Lat: {lat}, Lng: {lng}"
+            ).add_to(plant_code_layers[plant_code])
+            
+            waypoints_str.append(f"{lat},{lng}")
+        
+        # Add the plant location to the end of the waypoints
+        waypoints_str.append(f"{plant_lat},{plant_long}")
+        
+        try:
+            directions_result = gmaps.directions(
+                origin=waypoints_str[0],
+                destination=waypoints_str[-1],  # Destination is the plant
+                waypoints=waypoints_str[1:-1],  # All waypoints except the first and last
+                mode="driving",
+                optimize_waypoints=False  # Follow the order in the data
+            )
+            
+            if directions_result:
+                # Decode the polyline into a list of coordinates
+                route_polyline = directions_result[0]['overview_polyline']['points']
+                route_points = googlemaps.convert.decode_polyline(route_polyline)
+                route_coordinates = [(point['lat'], point['lng']) for point in route_points]
+                
+                # Plot the polyline on the map
+                folium.PolyLine(route_coordinates, color=route_colors[route_name], weight=5, opacity=0.8).add_to(plant_code_layers[plant_code])
+                
+                # Label the route name below the start point
+                start_point = route_coordinates[0]
+                folium.Marker(
+                    location=[start_point[0] - 0.001, start_point[1]],
+                    icon=folium.DivIcon(
+                        html=f"""
+                            <div style="font-size: 12pt; font-weight: bold; color: yellow; text-shadow: 1px 1px 2px black;
+                                        background-color: rgba(0, 0, 0, 0.7); border-radius: 5px; padding: 5px;">
+                                {route_name}
+                            </div>
+                        """
+                    )
+                ).add_to(plant_code_layers[plant_code])
+        
+        except googlemaps.exceptions.HTTPError as e:
+            print(f"An HTTP error occurred for the route {route_name}: {e}")
+    
+# Add all plant code layers to the map
+for plant_code_layer in plant_code_layers.values():
+    plant_code_layer.add_to(m)
+
+# Add a Layer Control to toggle visibility
+folium.LayerControl(collapsed=False).add_to(m)
+
+# Save the map to an HTML file
+output_file = r'C:\Users\satishkumar.s\Desktop\ramana\MAP CORRECT LAT&LONG each files\route_map.html'
+m.save(output_file)
+
+print("Map has been saved to:", output_file)
